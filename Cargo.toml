@@ -1,0 +1,13 @@
+[package]
+name = "sysmonitor-alert"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+infobip_sdk = "0.5.2"
+sysinfo = "0.30.5"
+tokio = "1.35.1"
+reqwest = "0.11.23"
+serde_json = "1.0.111"
