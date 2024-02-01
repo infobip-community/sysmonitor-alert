@@ -6,6 +6,31 @@ use std::env;
 use sysinfo::System;
 use tokio::time::Duration;
 use tokio::{join, time};
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// CPU usage percentage threshold
+    #[arg(default_value_t = 90.0)]
+    cpu_usage_threshold: f32,
+
+    /// Memory usage percentage threshold
+    #[arg(default_value_t = 80)]
+    mem_usage_threshold: u64,
+
+    /// Anomalous cycles needed to trigger alert
+    #[arg(default_value_t = 20)]
+    cycles_for_alert: usize,
+
+    /// OK cycles required between alerts
+    #[arg(default_value_t = 20)]
+    cycles_between_alert: usize,
+
+    /// Refresh interval in seconds
+    #[arg(default_value_t = 2)]
+    refresh_interval_secs: u64
+}
 
 async fn send_alert(message: String) {
     let client = WhatsappClient::with_configuration(Configuration::from_env_api_key().unwrap());
@@ -34,20 +59,14 @@ fn print_system_stats(sys: &System) {
     println!("Swap:       {} GiB", sys.total_swap() / bytesize::GIB);
 }
 
-async fn check_anomalies(mut sys: System) {
-    let cycles_for_alert = 15usize; // Reduce alert sensitivity. Only sustained spikes alert.
-    let cycles_between_alert = 10usize; // Avoid alerting for short spikes.
-    let cpu_usage_threshold = 90.0;
-    let mem_usage_threshold = 80;
-    let refresh_interval_secs = 1;
-
-    let mut interval = time::interval(Duration::from_secs(refresh_interval_secs));
+async fn check_anomalies(mut sys: System, args: Args) {
+    let mut interval = time::interval(Duration::from_secs(args.refresh_interval_secs));
 
     // Control counters to avoid alerting every iteration or short spikes.
     let mut cpus_high_cycles = vec![0; sys.cpus().len()];
-    let mut cpus_ok_cycles = vec![cycles_between_alert; sys.cpus().len()];
+    let mut cpus_ok_cycles = vec![args.cycles_between_alert; sys.cpus().len()];
     let mut mem_high_cycles = 0usize;
-    let mut mem_ok_cycles = cycles_between_alert;
+    let mut mem_ok_cycles = args.cycles_between_alert;
 
     loop {
         // Refresh CPU for accuracy.
@@ -65,10 +84,10 @@ async fn check_anomalies(mut sys: System) {
         // Check CPU usages.
         for (i, cpu) in sys.cpus().iter().enumerate() {
             let usage = cpu.cpu_usage();
-            if usage > cpu_usage_threshold {
+            if usage > args.cpu_usage_threshold {
                 cpus_high_cycles[i] += 1;
-                if cpus_high_cycles[i] >= cycles_for_alert
-                    && cpus_ok_cycles[i] >= cycles_between_alert
+                if cpus_high_cycles[i] >= args.cycles_for_alert
+                    && cpus_ok_cycles[i] >= args.cycles_between_alert
                 {
                     cpus_ok_cycles[i] = 0;
                     handles.push(send_alert(format!(
@@ -82,12 +101,12 @@ async fn check_anomalies(mut sys: System) {
         }
 
         // Check available memory.
-        if sys.used_memory() > sys.total_memory() / 100 * mem_usage_threshold {
+        if sys.used_memory() > sys.total_memory() / 100 * args.mem_usage_threshold {
             mem_high_cycles += 1;
-            if mem_high_cycles >= cycles_for_alert && mem_ok_cycles >= cycles_between_alert {
+            if mem_high_cycles >= args.cycles_for_alert && mem_ok_cycles >= args.cycles_between_alert {
                 mem_ok_cycles = 0;
                 handles.push(send_alert(format!(
-                    "{ts} {hostname}: High memory usage: >{mem_usage_threshold:.1}%"
+                    "{ts} {hostname}: High memory usage: >{:.1}%", args.mem_usage_threshold
                 )));
             }
         } else {
@@ -103,6 +122,8 @@ async fn check_anomalies(mut sys: System) {
 
 #[tokio::main]
 async fn main() {
+    let args= Args::parse();
+
     println!("=====================================");
     println!("Infobip WhatsApp Rusty System Monitor");
     println!("=====================================");
@@ -112,5 +133,5 @@ async fn main() {
     print_system_stats(&sys);
 
     println!("\nChecking for system anomalies ...");
-    check_anomalies(sys).await
+    check_anomalies(sys, args).await
 }
